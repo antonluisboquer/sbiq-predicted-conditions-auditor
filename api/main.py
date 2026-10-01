@@ -9,7 +9,12 @@ Expects a JSON event body of the form:
           "bucket": "tasktile-staging",
           "key": "clients/.../ocr/<document_id>.txt",
           "document_type": "Appraisal Report",
-          "specifications_unsatisfied": ["spec 1", "spec 2", ...]
+          "specifications_unsatisfied": ["spec 1", "spec 2", ...],
+          "borrower": "primary"  # optional; "primary" | "coborrower" | omitted.
+                                  # Pure pass-through -- see contracts.py's
+                                  # Borrower docstring -- not read or acted on
+                                  # here, just echoed onto the matching
+                                  # DocumentAuditResult.
         },
         ...
       ]

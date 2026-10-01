@@ -62,3 +62,38 @@ def test_every_specification_is_persisted_in_output_regardless_of_verdict(audit_
         "Earnest money deposit must be documented with a copy of the cancelled check or wire transfer confirmation.",
         "Earnest money deposit amount must match the amount stated in the purchase contract.",
     ]
+
+
+def test_borrower_tag_is_passed_through_unchanged():
+    """`borrower` is a pure pass-through -- the auditor never reads or
+    branches on it, just echoes it back onto the matching
+    DocumentAuditResult so the caller can tell which borrower's copy of a
+    document a given result row belongs to."""
+    fetcher = LocalDirOCRTextFetcher(FIXTURES / "ocr_texts")
+    requests = [
+        AuditRequest(
+            bucket="tasktile-staging",
+            key="clients/x/jobs/y/blobs/z/ocr/c5f7e0a2-b8ba-4533-8404-db9ba33e0b36.txt",
+            document_type="Purchase Contract",
+            specifications_unsatisfied=["spec A"],
+            borrower="primary",
+        ),
+        AuditRequest(
+            bucket="tasktile-staging",
+            key="clients/x/jobs/y/blobs/z/ocr/c5f7e0a2-b8ba-4533-8404-db9ba33e0b36.txt",
+            document_type="Purchase Contract",
+            specifications_unsatisfied=["spec A"],
+            borrower="coborrower",
+        ),
+        AuditRequest(
+            bucket="tasktile-staging",
+            key="clients/x/jobs/y/blobs/z/ocr/c5f7e0a2-b8ba-4533-8404-db9ba33e0b36.txt",
+            document_type="Purchase Contract",
+            specifications_unsatisfied=["spec A"],
+            # no borrower set at all -- must stay None, not error/default to something else.
+        ),
+    ]
+
+    report = run_audit(audit_requests=requests, fetcher=fetcher, dry_run=True)
+
+    assert [r.borrower for r in report.document_results] == ["primary", "coborrower", None]

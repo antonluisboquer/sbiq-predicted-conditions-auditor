@@ -23,6 +23,14 @@ from pydantic import BaseModel, Field, model_validator
 
 Verdict = Literal["satisfied", "unsatisfied"]
 
+# Purely a pass-through tag: the auditor never reads or branches on this --
+# it's just carried from AuditRequest to the matching DocumentAuditResult so
+# the caller (predicted-conditions) can tell which borrower's copy of a
+# document a given result row belongs to, for loan files where both the
+# primary borrower and a coborrower each submit their own copy of the same
+# document_type (e.g. two separate Bank Statement audits in one batch).
+Borrower = Literal["primary", "coborrower"]
+
 # A verdict can only be "satisfied" when the judge's own confidence meets
 # this bar; anything below it is forced to "unsatisfied" regardless of what
 # the model said, so a shaky/ambiguous call never slips through as a pass.
@@ -45,6 +53,10 @@ class AuditRequest(BaseModel):
     key: str
     document_type: str = ""
     specifications_unsatisfied: list[str] = Field(default_factory=list)
+    borrower: Optional[Borrower] = Field(
+        default=None,
+        description="Opt-in, purely a pass-through -- see Borrower's docstring above.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -85,6 +97,7 @@ class DocumentAuditResult(BaseModel):
     bucket: str
     key: str
     document_type: str = ""
+    borrower: Optional[Borrower] = None
     fetched: bool
     error: Optional[str] = None
     verdicts: list[SpecVerdict] = Field(default_factory=list)

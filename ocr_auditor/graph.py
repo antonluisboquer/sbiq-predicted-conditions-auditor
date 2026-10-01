@@ -46,6 +46,7 @@ class PendingAudit:
     key: str
     document_type: str
     specifications: list[str]
+    borrower: Optional[str] = None
     ocr_text: Optional[str] = None
     ocr_is_partial: bool = False
     ocr_whisper_metadata: dict = field(default_factory=dict)
@@ -57,6 +58,7 @@ class PendingAudit:
             bucket=self.bucket,
             key=self.key,
             document_type=self.document_type,
+            borrower=self.borrower,
             fetched=self.fetch_error is None,
             error=self.fetch_error,
             verdicts=self.verdicts,
@@ -94,6 +96,7 @@ def _prepare_node(state: AuditorState) -> AuditorState:
             key=req.key,
             document_type=req.document_type,
             specifications=list(req.specifications_unsatisfied),
+            borrower=req.borrower,
         )
         for req in state["audit_requests"]
     ]

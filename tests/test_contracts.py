@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from ocr_auditor.contracts import AuditRequest
 
 
@@ -5,6 +8,22 @@ def test_audit_request_defaults():
     req = AuditRequest(bucket="tasktile-staging", key="a/b/c.txt")
     assert req.document_type == ""
     assert req.specifications_unsatisfied == []
+    assert req.borrower is None
+
+
+def test_audit_request_accepts_borrower_primary():
+    req = AuditRequest(bucket="tasktile-staging", key="a/b/c.txt", borrower="primary")
+    assert req.borrower == "primary"
+
+
+def test_audit_request_accepts_borrower_coborrower():
+    req = AuditRequest(bucket="tasktile-staging", key="a/b/c.txt", borrower="coborrower")
+    assert req.borrower == "coborrower"
+
+
+def test_audit_request_rejects_invalid_borrower_value():
+    with pytest.raises(ValidationError):
+        AuditRequest(bucket="tasktile-staging", key="a/b/c.txt", borrower="primary_borrower")
 
 
 def test_audit_request_accepts_specifications_unsatisfied_shape():

@@ -52,11 +52,19 @@ knows where each document's OCR text lives.
       "bucket": "tasktile-staging",
       "key": "clients/<client>/jobs/<job>/blobs/<blob>/ocr/<document_id>.txt",
       "document_type": "Appraisal Report",
-      "specifications_unsatisfied": ["spec 1", "spec 2", "..."]
+      "specifications_unsatisfied": ["spec 1", "spec 2", "..."],
+      "borrower": "primary"
     }
   ]
 }
 ```
+
+`borrower` (optional: `"primary"` | `"coborrower"`, omit if not applicable)
+is a **pure pass-through** — the auditor never reads or branches on it, it's
+just echoed onto the matching `DocumentAuditResult` so a caller can tell
+which borrower's copy of a document a given result row belongs to when a
+batch includes both borrowers' copies of the same `document_type` (see
+`contracts.py`'s `Borrower` docstring).
 
 returns an `AuditReport` with one `DocumentAuditResult` per request, and
 **one verdict row per specification requested — every spec is persisted in
@@ -70,6 +78,7 @@ the output regardless of its verdict** (nothing is silently dropped):
       "bucket": "tasktile-staging",
       "key": "...",
       "document_type": "Appraisal Report",
+      "borrower": "primary",
       "fetched": true,
       "error": null,
       "verdicts": [
