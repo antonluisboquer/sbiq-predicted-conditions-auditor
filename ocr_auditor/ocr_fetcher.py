@@ -32,17 +32,46 @@ class S3OCRTextFetcher:
     manifest's `artifacts[]` entry.
 
     Requires boto3 plus credentials/role scoped to the source bucket, which
-    per spec open question #1 is NOT yet arranged. Calling this against the
-    real `tasktile-staging` bucket today is expected to fail with an auth
-    error until that access is granted (cross-account role, presigned URLs
-    issued at ingestion, or a Tasktile API proxy — see the spec).
+    per spec open question #1 is NOT yet arranged as of this writing.
+    Confirmed directly (read-only diagnostic, no writes):
+
+        - `tasktile-staging` is a real bucket, region `us-west-2`, NOT in
+          this project's own AWS account (828351637694) — HeadBucket from
+          that account returns 403 Forbidden.
+        - GetObject against a real, known OCR artifact key (from
+          `compiled_inputs/montes_10x/manifest.json`) returns AccessDenied
+          from that same account.
+
+    So this bucket is unambiguously owned by a different AWS account
+    (presumably Tasktile's), and 828351637694 currently has zero grant to
+    it. See docs/tasktile-bucket-access-request.md for the concrete ask this
+    implies and who to route it to.
+
+    Once access is arranged, either:
+      - a bucket policy on the Tasktile side grants this account direct
+        GetObject (no `role_arn` needed below), or
+      - a cross-account IAM role is exposed for this account to assume
+        (pass its ARN as `role_arn`).
     """
 
-    def __init__(self, client=None):
+    def __init__(self, client=None, *, role_arn: str | None = None, region_name: str = "us-west-2"):
         if client is None:
             import boto3  # local import — keep boto3 optional for non-AWS paths
 
-            client = boto3.client("s3")
+            if role_arn:
+                sts = boto3.client("sts")
+                creds = sts.assume_role(
+                    RoleArn=role_arn, RoleSessionName="ocr-auditor-fetch"
+                )["Credentials"]
+                client = boto3.client(
+                    "s3",
+                    region_name=region_name,
+                    aws_access_key_id=creds["AccessKeyId"],
+                    aws_secret_access_key=creds["SecretAccessKey"],
+                    aws_session_token=creds["SessionToken"],
+                )
+            else:
+                client = boto3.client("s3", region_name=region_name)
         self._client = client
 
     def fetch(self, bucket: str, key: str) -> str:

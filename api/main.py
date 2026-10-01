@@ -38,6 +38,10 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 MODEL = os.environ.get("AUDITOR_MODEL", DEFAULT_MODEL)
+# Set once cross-account access to tasktile-staging is arranged (see
+# docs/tasktile-bucket-access-request.md) — only needed if that access takes
+# the form of an assumable IAM role rather than a direct bucket policy grant.
+OCR_SOURCE_BUCKET_ROLE_ARN = os.environ.get("OCR_SOURCE_BUCKET_ROLE_ARN") or None
 
 
 def _error_response(status: int, message: str) -> dict:
@@ -73,7 +77,7 @@ def handler(event, context=None):
         report = run_audit(
             document_requests=document_requests,
             manifest=manifest,
-            fetcher=S3OCRTextFetcher(),
+            fetcher=S3OCRTextFetcher(role_arn=OCR_SOURCE_BUCKET_ROLE_ARN),
             model=MODEL,
         )
     except Exception as exc:  # noqa: BLE001
