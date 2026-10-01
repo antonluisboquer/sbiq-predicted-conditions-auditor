@@ -168,7 +168,17 @@ class S3OCRTextFetcher:
         """Build from `TASK_TILE_S3_ACCESS_KEY` / `TASK_TILE_S3_SECRET_KEY`
         env vars — the dedicated Tasktile-OCR-scoped credentials
         (deliberately separate from predicted-conditions' own general AWS
-        creds, per the naming convention in `.env`)."""
+        creds, per the naming convention in `.env`).
+
+        Deliberately reads `TASK_TILE_S3_REGION`, NOT `AWS_REGION`: on AWS
+        Lambda, `AWS_REGION` is a *reserved* env var the runtime always
+        force-populates with the function's own deployed region, so it
+        can't be used to pin this client to `tasktile-staging`'s region
+        (`us-west-2`) if the Lambda itself is ever deployed elsewhere (e.g.
+        `us-east-2`, matching predicted-conditions' account/region). Using
+        a distinct name keeps the S3 bucket's region fully independent of
+        wherever this Lambda happens to run.
+        """
         import os
 
         access_key_id = os.environ.get("TASK_TILE_S3_ACCESS_KEY")
@@ -181,7 +191,7 @@ class S3OCRTextFetcher:
         return cls(
             access_key_id=access_key_id,
             secret_access_key=secret_access_key,
-            region_name=os.environ.get("AWS_REGION", region_name),
+            region_name=os.environ.get("TASK_TILE_S3_REGION", region_name),
         )
 
     def fetch(self, bucket: str, key: str) -> OCRTextResult:

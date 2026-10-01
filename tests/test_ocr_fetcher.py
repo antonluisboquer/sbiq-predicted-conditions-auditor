@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -7,6 +8,7 @@ from ocr_auditor.ocr_fetcher import (
     LocalDirOCRTextFetcher,
     OCRTextFetchError,
     OCRTextResult,
+    S3OCRTextFetcher,
     _parse_artifact_body,
 )
 
@@ -75,3 +77,40 @@ def test_parse_artifact_body_falls_back_when_json_missing_result_text():
     body = json.dumps({"some_other_field": "value"}).encode("utf-8")
     result = _parse_artifact_body(body)
     assert "some_other_field" in result.text  # fell back to raw decoded body
+
+
+def test_from_env_uses_task_tile_s3_region_not_aws_region(monkeypatch):
+    """Regression guard: AWS_REGION is reserved by the Lambda runtime and
+    always force-set to wherever the function is deployed, so it must NOT
+    influence which region the tasktile-staging S3 client is built with.
+    TASK_TILE_S3_REGION is the only var that should matter here."""
+    monkeypatch.setenv("TASK_TILE_S3_ACCESS_KEY", "fake-key")
+    monkeypatch.setenv("TASK_TILE_S3_SECRET_KEY", "fake-secret")
+    monkeypatch.setenv("AWS_REGION", "us-east-2")  # simulates Lambda's reserved var
+    monkeypatch.setenv("TASK_TILE_S3_REGION", "us-west-2")
+
+    with patch("boto3.client") as mock_boto_client:
+        S3OCRTextFetcher.from_env()
+
+    _, kwargs = mock_boto_client.call_args
+    assert kwargs["region_name"] == "us-west-2"
+
+
+def test_from_env_defaults_region_when_task_tile_s3_region_unset(monkeypatch):
+    monkeypatch.setenv("TASK_TILE_S3_ACCESS_KEY", "fake-key")
+    monkeypatch.setenv("TASK_TILE_S3_SECRET_KEY", "fake-secret")
+    monkeypatch.delenv("TASK_TILE_S3_REGION", raising=False)
+    monkeypatch.setenv("AWS_REGION", "us-east-2")  # must be ignored
+
+    with patch("boto3.client") as mock_boto_client:
+        S3OCRTextFetcher.from_env()
+
+    _, kwargs = mock_boto_client.call_args
+    assert kwargs["region_name"] == "us-west-2"
+
+
+def test_from_env_raises_without_credentials(monkeypatch):
+    monkeypatch.delenv("TASK_TILE_S3_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("TASK_TILE_S3_SECRET_KEY", raising=False)
+    with pytest.raises(OCRTextFetchError):
+        S3OCRTextFetcher.from_env()

@@ -38,9 +38,15 @@ from ocr_auditor.contracts import AuditRequest  # noqa: E402
 from ocr_auditor.graph import run_audit  # noqa: E402
 from ocr_auditor.judge import DEFAULT_MODEL  # noqa: E402
 from ocr_auditor.ocr_fetcher import S3OCRTextFetcher  # noqa: E402
+from ocr_auditor.secrets import load_secrets  # noqa: E402
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+# Cold-start secrets hydration (no-op locally where AGENT_SECRETS_ARN isn't
+# set -- .env keeps covering ANTHROPIC_API_KEY / TASK_TILE_S3_* there). Must
+# run before MODEL/fetcher construction below depend on those env vars.
+load_secrets()
 
 MODEL = os.environ.get("AUDITOR_MODEL", DEFAULT_MODEL)
 # Set only if cross-account access to the OCR source bucket takes the form

@@ -38,8 +38,8 @@ from constructs import Construct
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Keep in sync with api/main.py's expected environment.
-SECRET_KEYS = ["ANTHROPIC_API_KEY"]
+# Keep in sync with ocr_auditor/secrets.py:SECRET_KEYS.
+SECRET_KEYS = ["ANTHROPIC_API_KEY", "TASK_TILE_S3_ACCESS_KEY", "TASK_TILE_S3_SECRET_KEY"]
 
 _DOCKER_BUILD_EXCLUDES = [
     ".venv",
@@ -114,32 +114,41 @@ class OcrAuditorStack(Stack):
                 extra_hash=_image_source_hash(),
             ),
             memory_size=2048,
-            timeout=Duration.seconds(300),
+            # 900s is the Lambda platform maximum. A single document's
+            # fetch+judge call runs in ~1-2 minutes; this gives headroom for
+            # a batch of several documents in one audit_requests payload
+            # (processed sequentially -- see ocr_auditor/graph.py) without
+            # needing a Fargate worker (see module docstring).
+            timeout=Duration.seconds(900),
             architecture=lambda_.Architecture.ARM_64,
             environment={
                 "AGENT_SECRETS_ARN": agent_secrets.secret_arn,
                 "AUDITOR_MODEL": _deploy_env("AUDITOR_MODEL", "claude-sonnet-4-5-20250929"),
+                # NOT "AWS_REGION" -- that name is reserved by the Lambda
+                # runtime and always gets force-set to wherever this
+                # function itself is deployed (see ocr_fetcher.py). This is
+                # tasktile-staging's own region, independent of that.
+                "TASK_TILE_S3_REGION": _deploy_env("TASK_TILE_S3_REGION", "us-west-2"),
             },
         )
         agent_secrets.grant_read(auditor_fn)
 
         # --- Tasktile OCR bucket access (spec open question #1) ---
-        # NOT YET ARRANGED as of this writing. Confirmed directly (read-only
-        # probe, this account's existing predicted-conditions AWS creds):
-        #   - `tasktile-staging` IS a real bucket, region us-west-2, and is
-        #     NOT owned by this project's AWS account (828351637694) --
-        #     HeadBucket returns 403 Forbidden from that account.
-        #   - GetObject on a real, known OCR artifact key returns
-        #     AccessDenied from that same account.
-        # See docs/tasktile-bucket-access-request.md for the concrete ask
-        # and who to route it to. Once resolved, set ONE of:
-        #   - OCR_SOURCE_BUCKET_NAME: Tasktile grants a bucket policy
-        #     allowing this account's Lambda role direct GetObject -- adds
-        #     an identity-policy statement below.
-        #   - OCR_SOURCE_BUCKET_ROLE_ARN: Tasktile instead exposes a
-        #     cross-account role to assume -- grant sts:AssumeRole on it
-        #     instead (S3OCRTextFetcher already supports `role_arn=`, wired
-        #     via api/main.py's OCR_SOURCE_BUCKET_ROLE_ARN env var).
+        # RESOLVED: dedicated static credentials (TASK_TILE_S3_ACCESS_KEY/
+        # TASK_TILE_S3_SECRET_KEY, a separate Tasktile-scoped IAM user, NOT
+        # this stack's own Lambda role) are hydrated from Secrets Manager
+        # at cold start (ocr_auditor/secrets.py) and used directly by
+        # S3OCRTextFetcher.from_env() -- confirmed working against
+        # `tasktile-staging` (see docs/tasktile-bucket-access-request.md
+        # for the resolution). No IAM policy grant on the Lambda's own role
+        # is needed for that path, since the S3 calls authenticate as a
+        # different, externally-managed identity entirely.
+        #
+        # The block below is an ALTERNATIVE path, not currently used: if
+        # Tasktile later grants access via a bucket policy on this stack's
+        # own Lambda role, or an assumable cross-account role, instead of
+        # handing out static keys, set ONE of the two env vars below before
+        # `cdk deploy` to switch to that mechanism instead.
         source_bucket_name = _deploy_env("OCR_SOURCE_BUCKET_NAME")
         source_bucket_role_arn = _deploy_env("OCR_SOURCE_BUCKET_ROLE_ARN")
         if source_bucket_name:
@@ -157,15 +166,9 @@ class OcrAuditorStack(Stack):
                 )
             )
             auditor_fn.add_environment("OCR_SOURCE_BUCKET_ROLE_ARN", source_bucket_role_arn)
-        else:
-            print(
-                "[infra/stacks/ocr_auditor_stack.py] WARNING: neither "
-                "OCR_SOURCE_BUCKET_NAME nor OCR_SOURCE_BUCKET_ROLE_ARN is set "
-                "-- deploying without any S3 read permission for "
-                "tasktile-staging. S3OCRTextFetcher will fail at runtime until "
-                "the access described in docs/tasktile-bucket-access-request.md "
-                "is arranged."
-            )
+        # else: neither alternative env var is set -- expected/normal.
+        # S3OCRTextFetcher.from_env() uses the static TASK_TILE_S3_* secret
+        # values hydrated above instead (the default, working path).
 
         # Lambda Function URL -- simple HTTP entry point, no API Gateway
         # needed for a single-endpoint read-only service.
