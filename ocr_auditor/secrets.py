@@ -33,6 +33,12 @@ SECRET_KEYS = (
     # api/main.py).
     "TASK_TILE_S3_ACCESS_KEY",
     "TASK_TILE_S3_SECRET_KEY",
+    # Static app-level auth key for the Function URL's `x-api-key` header
+    # check (api/main.py) -- same pattern as predicted-conditions'
+    # api/secrets.py. The Function URL itself uses
+    # FunctionUrlAuthType.NONE (no AWS SigV4 required), so this is the
+    # only thing gating access to the public HTTP endpoint.
+    "API_KEY",
 )
 
 

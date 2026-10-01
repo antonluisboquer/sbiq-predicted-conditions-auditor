@@ -39,7 +39,12 @@ from constructs import Construct
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Keep in sync with ocr_auditor/secrets.py:SECRET_KEYS.
-SECRET_KEYS = ["ANTHROPIC_API_KEY", "TASK_TILE_S3_ACCESS_KEY", "TASK_TILE_S3_SECRET_KEY"]
+SECRET_KEYS = [
+    "ANTHROPIC_API_KEY",
+    "TASK_TILE_S3_ACCESS_KEY",
+    "TASK_TILE_S3_SECRET_KEY",
+    "API_KEY",
+]
 
 _DOCKER_BUILD_EXCLUDES = [
     ".venv",
@@ -89,13 +94,24 @@ class OcrAuditorStack(Stack):
         # Real secret values are NOT passed to CDK/CloudFormation -- pushed
         # out-of-band via `aws secretsmanager put-secret-value` after
         # `cdk deploy`, same pattern as predicted-conditions.
+        #
+        # IMPORTANT: `generate_secret_string`'s template is DELIBERATELY NOT
+        # derived from SECRET_KEYS (don't do `",".join(f'"{k}":""' for k in
+        # SECRET_KEYS)` here, however tempting). AWS::SecretsManager::Secret
+        # regenerates its ENTIRE SecretString -- wiping out any real values
+        # already pushed out-of-band -- on any stack update that changes the
+        # GenerateSecretString property at all, even just adding a new key
+        # to the template string. Keeping this template fixed and totally
+        # independent of SECRET_KEYS means future SECRET_KEYS additions
+        # don't silently nuke already-deployed secrets on the next
+        # `cdk deploy`. (Hit this exact bug once already -- see git log.)
         agent_secrets = secretsmanager.Secret(
             self,
             "AuditorSecrets",
             secret_name=(None if is_prod else f"ocr-auditor-secrets{suffix}"),
             description=f"ocr-auditor-agent API keys ({stage}). Managed out-of-band.",
             generate_secret_string=secretsmanager.SecretStringGenerator(
-                secret_string_template="{" + ",".join(f'"{k}":""' for k in SECRET_KEYS) + "}",
+                secret_string_template="{}",
                 generate_string_key="_cfn_placeholder",
                 exclude_punctuation=True,
             ),
@@ -172,8 +188,15 @@ class OcrAuditorStack(Stack):
 
         # Lambda Function URL -- simple HTTP entry point, no API Gateway
         # needed for a single-endpoint read-only service.
+        #
+        # auth_type=NONE (not AWS_IAM): callers (e.g. predicted-conditions,
+        # or any other service) authenticate with a static `x-api-key`
+        # header checked in api/main.py's handler() instead of signing
+        # requests with AWS SigV4 -- same pattern as predicted-conditions'
+        # own API_KEY/x-api-key middleware, and avoids requiring every
+        # caller to hold AWS credentials in this specific account.
         function_url = auditor_fn.add_function_url(
-            auth_type=lambda_.FunctionUrlAuthType.AWS_IAM,
+            auth_type=lambda_.FunctionUrlAuthType.NONE,
             invoke_mode=lambda_.InvokeMode.BUFFERED,
         )
 

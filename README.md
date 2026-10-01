@@ -166,19 +166,60 @@ fake LLM stand-in in `tests/test_judge.py`.
 ## Deployment
 
 `infra/` is an AWS CDK stack (`OcrAuditorStack`) deploying a single
-container-image Lambda behind an IAM-authenticated Function URL — see
+container-image Lambda behind a Function URL — see
 `infra/stacks/ocr_auditor_stack.py`. It is a **genuinely separate** stack
 from `predicted-conditions`' own (no shared Lambda, table, or runtime; see
-spec `#deployment-shape`). S3 read permission for the Tasktile OCR bucket is
-left unset until the access described in spec open question #1 is arranged
-(`OCR_SOURCE_BUCKET_NAME` env var wires it in once available).
+spec `#deployment-shape`), but is deployed into the **same shared AWS
+account** predicted-conditions already uses (`828351637694`, `us-east-2`),
+rather than standing up a new one.
+
+**Auth**: the Function URL is `FunctionUrlAuthType.NONE` (not
+`AWS_IAM`/SigV4) — callers authenticate with a static `x-api-key` header
+instead (checked in `api/main.py`'s `_check_api_key()`), the same pattern
+predicted-conditions itself uses. This means any caller can reach it over
+plain HTTP with just the key, without needing AWS credentials in this
+account at all.
+
+Tasktile OCR bucket access (`tasktile-staging`, a **different** AWS account
+from the one this Lambda runs in) uses dedicated static credentials
+(`TASK_TILE_S3_ACCESS_KEY`/`TASK_TILE_S3_SECRET_KEY`), not an IAM role on
+this stack's own Lambda — see `ocr_auditor/ocr_fetcher.py`.
+
+All four secrets (`ANTHROPIC_API_KEY`, `TASK_TILE_S3_ACCESS_KEY`,
+`TASK_TILE_S3_SECRET_KEY`, `API_KEY`) live in Secrets Manager, hydrated into
+`os.environ` at Lambda cold start by `ocr_auditor/secrets.py`. They are
+**never** passed as CloudFormation properties — push/update them out-of-band
+after any deploy:
 
 ```bash
 cd infra
 pip install -r requirements.txt
-export OCR_AUDITOR_AWS_ACCOUNT_ID=...
-export OCR_AUDITOR_AWS_REGION=...
+export OCR_AUDITOR_AWS_ACCOUNT_ID=828351637694
+export OCR_AUDITOR_AWS_REGION=us-east-2
+export OCR_AUDITOR_STAGE=dev   # or "prod"
 cdk deploy
+
+# then push real secret values (see AuditorSecretsArn in the deploy output)
+aws secretsmanager put-secret-value --secret-id <AuditorSecretsArn> \
+  --secret-string '{"ANTHROPIC_API_KEY":"...","TASK_TILE_S3_ACCESS_KEY":"...","TASK_TILE_S3_SECRET_KEY":"...","API_KEY":"..."}'
+```
+
+⚠️ **Gotcha** (see the comment above `agent_secrets` in
+`infra/stacks/ocr_auditor_stack.py`): never derive
+`generate_secret_string`'s template from `SECRET_KEYS` — changing that
+property on an existing `AWS::SecretsManager::Secret` makes CloudFormation
+regenerate the *entire* secret value on the next `cdk deploy`, silently
+wiping out whatever real values were pushed out-of-band. The template is
+deliberately a fixed `"{}"`, independent of `SECRET_KEYS`, so adding new
+keys later can't trigger this again.
+
+Calling the deployed agent once secrets are pushed:
+
+```bash
+curl -X POST "<FunctionUrl from deploy output>" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: <API_KEY>" \
+  -d '{"audit_requests": [...]}'
 ```
 
 ## Repo layout

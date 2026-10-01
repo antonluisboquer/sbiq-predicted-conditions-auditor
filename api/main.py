@@ -62,7 +62,42 @@ def _error_response(status: int, message: str) -> dict:
     }
 
 
+def _check_api_key(event: dict) -> str | None:
+    """Validate the `x-api-key` header for Function URL / HTTP-shaped
+    invocations, mirroring predicted-conditions' `api/main.py` auth
+    middleware. The Function URL is deployed with
+    FunctionUrlAuthType.NONE (see infra/stacks/ocr_auditor_stack.py) so
+    this app-level check is the only thing gating public access to it.
+
+    Returns an error message if the request should be rejected, or None
+    if it's OK to proceed. Direct raw-dict Lambda invokes (no "headers"
+    key at all -- used by scripts/run_local.py-style callers and the
+    deploy smoke test) skip this check entirely, since that path is
+    already gated by AWS IAM's own `lambda:InvokeFunction` permission.
+    """
+    headers = event.get("headers")
+    if not isinstance(headers, dict):
+        return None
+
+    expected_key = os.environ.get("API_KEY", "").strip()
+    if not expected_key:
+        # No API_KEY configured at all -- fail closed rather than silently
+        # leaving the public Function URL wide open.
+        logger.error("API_KEY is not set; rejecting Function URL request")
+        return "server is not configured with an API key"
+
+    provided = headers.get("x-api-key") or headers.get("X-Api-Key") or ""
+    if provided != expected_key:
+        return "invalid API key"
+    return None
+
+
 def handler(event, context=None):
+    if isinstance(event, dict):
+        auth_error = _check_api_key(event)
+        if auth_error:
+            return _error_response(401, auth_error)
+
     # Supports both a raw dict payload (direct Lambda invoke / local test)
     # and an API Gateway / Function URL style event with a string "body".
     body = event
