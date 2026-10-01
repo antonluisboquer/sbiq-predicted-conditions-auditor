@@ -9,8 +9,9 @@ Two fetch modes:
     fixture files (keyed by the last path segment of each request's `key`).
     No AWS needed.
   - (default, no `--ocr-dir`): S3OCRTextFetcher.from_env(), reads real OCR
-    artifacts from S3 using the S3_ACCESS_KEY/S3_SECRET_KEY credentials in
-    .env. See docs/tasktile-bucket-access-request.md.
+    artifacts from S3 using the TASK_TILE_S3_ACCESS_KEY/
+    TASK_TILE_S3_SECRET_KEY credentials in .env. See
+    docs/tasktile-bucket-access-request.md.
 
 Usage:
     python scripts/run_local.py \\
@@ -24,9 +25,10 @@ Runnable against the bundled synthetic fixtures (no AWS/API key needed):
         --ocr-dir tests/fixtures/ocr_texts \\
         --dry-run
 
-Or against a real loan sample + real S3 (requires .env's S3_ACCESS_KEY/
-S3_SECRET_KEY and ANTHROPIC_API_KEY). If you only have the older
-final_output.json + manifest.json shape, convert it first:
+Or against a real loan sample + real S3 (requires .env's
+TASK_TILE_S3_ACCESS_KEY/TASK_TILE_S3_SECRET_KEY and ANTHROPIC_API_KEY). If
+you only have the older final_output.json + manifest.json shape, convert
+it first:
 
     python scripts/manifest_to_audit_requests.py \\
         --final-output .../compiled_inputs/sahay/final_output.json \\
@@ -79,7 +81,7 @@ def main() -> None:
         help=(
             "Directory of local '<document_id>.txt' OCR fixture files. "
             "If omitted, fetches real OCR text from S3 using "
-            "S3_ACCESS_KEY/S3_SECRET_KEY from .env."
+            "TASK_TILE_S3_ACCESS_KEY/TASK_TILE_S3_SECRET_KEY from .env."
         ),
     )
     parser.add_argument("--output", type=Path, default=None, help="Write report JSON here")

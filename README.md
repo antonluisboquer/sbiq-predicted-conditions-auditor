@@ -144,8 +144,8 @@ python scripts/run_local.py \
   --audit-requests tests/fixtures/sample_audit_requests.json \
   --ocr-dir tests/fixtures/ocr_texts
 
-# Against real S3 (requires .env's S3_ACCESS_KEY/S3_SECRET_KEY) -- omit
-# --ocr-dir:
+# Against real S3 (requires .env's TASK_TILE_S3_ACCESS_KEY/
+# TASK_TILE_S3_SECRET_KEY) -- omit --ocr-dir:
 python scripts/run_local.py --audit-requests /tmp/my_audit_requests.json
 ```
 

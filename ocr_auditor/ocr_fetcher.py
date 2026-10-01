@@ -165,18 +165,18 @@ class S3OCRTextFetcher:
 
     @classmethod
     def from_env(cls, *, region_name: str = "us-west-2") -> "S3OCRTextFetcher":
-        """Build from `S3_ACCESS_KEY` / `S3_SECRET_KEY` env vars — the
-        dedicated Tasktile-OCR-scoped credentials (deliberately separate
-        from predicted-conditions' own general AWS creds, per the naming
-        convention already in use in `.env`)."""
+        """Build from `TASK_TILE_S3_ACCESS_KEY` / `TASK_TILE_S3_SECRET_KEY`
+        env vars — the dedicated Tasktile-OCR-scoped credentials
+        (deliberately separate from predicted-conditions' own general AWS
+        creds, per the naming convention in `.env`)."""
         import os
 
-        access_key_id = os.environ.get("S3_ACCESS_KEY")
-        secret_access_key = os.environ.get("S3_SECRET_KEY")
+        access_key_id = os.environ.get("TASK_TILE_S3_ACCESS_KEY")
+        secret_access_key = os.environ.get("TASK_TILE_S3_SECRET_KEY")
         if not access_key_id or not secret_access_key:
             raise OCRTextFetchError(
-                "S3_ACCESS_KEY / S3_SECRET_KEY not set — required for "
-                "S3OCRTextFetcher.from_env()"
+                "TASK_TILE_S3_ACCESS_KEY / TASK_TILE_S3_SECRET_KEY not set — "
+                "required for S3OCRTextFetcher.from_env()"
             )
         return cls(
             access_key_id=access_key_id,
