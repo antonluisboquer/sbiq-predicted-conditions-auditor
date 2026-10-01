@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.egg-info/
+
+# CDK
+infra/cdk.out/
+infra/.cdk.staging/
+
+# Local run artifacts
+*.log
+/report*.json
+.pytest_cache/

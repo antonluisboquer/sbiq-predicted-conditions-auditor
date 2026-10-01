@@ -1,0 +1,32 @@
+[SYNTHETIC FIXTURE — not real Tasktile OCR output; real OCR .txt format/
+content has not been inspected yet per docs/ocr-auditor-agent-spec.md open
+question #5. Used only to exercise the judge prompt/parsing locally.]
+
+CALIFORNIA RESIDENTIAL PURCHASE AGREEMENT AND JOINT ESCROW INSTRUCTIONS
+
+Date: February 9, 2026
+Buyer: Veronica Montes
+Property: 13109 Amanda Court, Bakersfield, California 93314
+Purchase Price: $410,000.00
+
+1. OFFER
+A. This is an offer from Veronica Montes ("Buyer") to purchase the above
+   referenced real property.
+
+...
+
+27. ACCEPTANCE OF OFFER
+Buyer and Seller acknowledge and agree that Broker(s) do not guarantee the
+condition of the Property.
+
+BUYER SIGNATURE: /s/ Veronica Montes          DATE: 02/09/2026
+SELLER SIGNATURE: /s/ Robert Chen             DATE: 02/09/2026
+
+ADDENDUM NO. 1 TO PURCHASE AGREEMENT
+This addendum amends paragraph 14 (Close of Escrow) to extend the closing
+date to March 15, 2026. All other terms remain unchanged.
+
+BUYER SIGNATURE: /s/ Veronica Montes          DATE: 02/11/2026
+SELLER SIGNATURE: /s/ Robert Chen             DATE: 02/11/2026
+
+[END OF DOCUMENT — 21 pages total]

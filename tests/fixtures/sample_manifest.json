@@ -1,0 +1,95 @@
+{
+  "job": {"tasks": []},
+  "input": [],
+  "counts": {},
+  "tenant": "fixture-tenant",
+  "version": 1,
+  "documents": [
+    {
+      "id": "c5f7e0a2-b8ba-4533-8404-db9ba33e0b36",
+      "source": {
+        "key": "clients/cedb9bff-dc2f-4be5-9a7d-931dd3e78dcc/jobs/5dc75ab2-8d3c-40a7-bfe0-ea946c8496c8/blobs/5482ff8d-87fa-4196-836b-c052d612c653/documents/c5f7e0a2-b8ba-4533-8404-db9ba33e0b36.pdf",
+        "bucket": "tasktile-staging"
+      },
+      "blob_id": "5482ff8d-87fa-4196-836b-c052d612c653",
+      "category": {
+        "source": "hil",
+        "category_id": 200,
+        "category_name": "Purchase Contract",
+        "document_name_schema": "Purchase Contract - 13109 AMANDA COURT BAKERSFIELD California 93314 2026-02-09 2026-02-09"
+      },
+      "metadata": {
+        "buyers": [
+          {"suffix": null, "lastName": "MONTES", "firstName": "VERONICA", "middleName": null}
+        ],
+        "signed": true,
+        "category": "200_Purchase Contract",
+        "confidence": 0.997672975063324,
+        "dateSigned": "2026-02-09",
+        "total_pages": 21,
+        "vision_check": "passed"
+      }
+    },
+    {
+      "id": "53134a24-92f3-45b5-8468-58d593c99da3",
+      "source": {
+        "key": "clients/cedb9bff-dc2f-4be5-9a7d-931dd3e78dcc/jobs/5dc75ab2-8d3c-40a7-bfe0-ea946c8496c8/blobs/1f4201d8-9938-437f-98df-ca731fdaef43/documents/53134a24-92f3-45b5-8468-58d593c99da3.pdf",
+        "bucket": "tasktile-staging"
+      },
+      "blob_id": "1f4201d8-9938-437f-98df-ca731fdaef43",
+      "category": {
+        "source": "hil",
+        "category_id": 1080,
+        "category_name": "EMD Docs",
+        "document_name_schema": "EMD Docs - PLACER TITLE COMPANY VERONICA MARIE MONTES 13109 AMANDA COURT BAKERSFIELD California 93314 2026-03-02"
+      },
+      "metadata": {
+        "date": "2026-03-02",
+        "buyers": [
+          {"suffix": null, "lastName": "MONTES", "firstName": "VERONICA MARIE", "middleName": null}
+        ],
+        "category": "1080_EMD Docs",
+        "confidence": 0.9972604513168335,
+        "total_pages": 2,
+        "vision_check": "passed"
+      }
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000099",
+      "source": {
+        "key": "clients/cedb9bff-dc2f-4be5-9a7d-931dd3e78dcc/jobs/5dc75ab2-8d3c-40a7-bfe0-ea946c8496c8/blobs/00000000-0000-0000-0000-00000000bbbb/documents/00000000-0000-0000-0000-000000000099.pdf",
+        "bucket": "tasktile-staging"
+      },
+      "blob_id": "00000000-0000-0000-0000-00000000bbbb",
+      "category": {
+        "source": "hil",
+        "category_id": 162,
+        "category_name": "Appraisal Report",
+        "document_name_schema": "Appraisal Report - fixture only, no OCR artifact on purpose"
+      },
+      "metadata": {
+        "value": 690000,
+        "total_pages": 40,
+        "vision_check": "passed"
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "ocr",
+      "source": {
+        "key": "clients/cedb9bff-dc2f-4be5-9a7d-931dd3e78dcc/jobs/5dc75ab2-8d3c-40a7-bfe0-ea946c8496c8/blobs/5482ff8d-87fa-4196-836b-c052d612c653/ocr/c5f7e0a2-b8ba-4533-8404-db9ba33e0b36.txt",
+        "bucket": "tasktile-staging"
+      },
+      "document_id": "c5f7e0a2-b8ba-4533-8404-db9ba33e0b36"
+    },
+    {
+      "type": "ocr",
+      "source": {
+        "key": "clients/cedb9bff-dc2f-4be5-9a7d-931dd3e78dcc/jobs/5dc75ab2-8d3c-40a7-bfe0-ea946c8496c8/blobs/1f4201d8-9938-437f-98df-ca731fdaef43/ocr/53134a24-92f3-45b5-8468-58d593c99da3.txt",
+        "bucket": "tasktile-staging"
+      },
+      "document_id": "53134a24-92f3-45b5-8468-58d593c99da3"
+    }
+  ]
+}

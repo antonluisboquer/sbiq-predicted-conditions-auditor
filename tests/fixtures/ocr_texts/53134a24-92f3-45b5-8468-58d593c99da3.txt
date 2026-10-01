@@ -1,0 +1,20 @@
+[SYNTHETIC FIXTURE — not real Tasktile OCR output; see note in the
+sibling .txt fixture in this directory.]
+
+PLACER TITLE COMPANY
+EARNEST MONEY DEPOSIT RECEIPT
+
+Date: March 2, 2026
+Received from: Veronica Marie Montes
+Amount: $5,000.00
+Form of payment: Wire transfer, confirmation #WT-20260302-4471
+Property: 13109 Amanda Court, Bakersfield, California 93314
+Escrow Number: ESC-2026-00981
+
+This receipt confirms that the above earnest money deposit has been
+received and deposited into the escrow trust account in connection with
+the above-referenced transaction.
+
+Authorized Signature: /s/ Linda Park, Escrow Officer
+
+[END OF DOCUMENT — 2 pages total]
