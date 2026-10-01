@@ -28,7 +28,7 @@ def test_judge_document_maps_verdicts_back_to_specs_in_order():
                 ),
                 RawVerdict(
                     specification="spec A",
-                    verdict="still_unsatisfied",
+                    verdict="unsatisfied",
                     evidence_quote=None,
                     confidence=0.6,
                     reasoning="reason A",
@@ -39,16 +39,100 @@ def test_judge_document_maps_verdicts_back_to_specs_in_order():
 
     results = judge_document(
         document_type="Purchase Contract",
-        document_id="doc-1",
         ocr_text="irrelevant for this test",
         specifications=specs,
         llm=fake,
     )
 
     assert [r.specification for r in results] == specs  # preserves input order
-    assert results[0].verdict == "still_unsatisfied"
+    assert results[0].verdict == "unsatisfied"
     assert results[1].verdict == "satisfied"
     assert results[1].evidence_quote == "quote B"
+    # `reasoning` is used internally but never exposed on the output contract.
+    assert not hasattr(results[0], "reasoning")
+
+
+def test_judge_document_downgrades_low_confidence_satisfied_to_unsatisfied():
+    """A "satisfied" verdict below CONFIDENCE_THRESHOLD (0.8) is forced to
+    "unsatisfied" -- never passed through as a satisfied call just because
+    the model said so."""
+    fake = _FakeLLM(
+        JudgeResponse(
+            verdicts=[
+                RawVerdict(
+                    specification="spec A",
+                    verdict="satisfied",
+                    evidence_quote="weak evidence",
+                    confidence=0.5,
+                    reasoning="not fully sure",
+                ),
+            ]
+        )
+    )
+
+    results = judge_document(
+        document_type="Purchase Contract",
+        ocr_text="irrelevant",
+        specifications=["spec A"],
+        llm=fake,
+    )
+
+    assert results[0].verdict == "unsatisfied"
+    assert results[0].confidence == 0.5  # confidence score itself is untouched
+    assert results[0].evidence_quote == "weak evidence"
+
+
+def test_judge_document_keeps_high_confidence_satisfied():
+    fake = _FakeLLM(
+        JudgeResponse(
+            verdicts=[
+                RawVerdict(
+                    specification="spec A",
+                    verdict="satisfied",
+                    evidence_quote="strong evidence",
+                    confidence=0.8,
+                    reasoning="clear",
+                ),
+            ]
+        )
+    )
+
+    results = judge_document(
+        document_type="Purchase Contract",
+        ocr_text="irrelevant",
+        specifications=["spec A"],
+        llm=fake,
+    )
+
+    assert results[0].verdict == "satisfied"  # exactly at threshold -> keeps
+
+
+def test_judge_document_never_upgrades_unsatisfied_regardless_of_confidence():
+    """The confidence gate only ever makes a verdict stricter -- a model-
+    reported "unsatisfied" is never flipped to "satisfied", however high
+    its confidence."""
+    fake = _FakeLLM(
+        JudgeResponse(
+            verdicts=[
+                RawVerdict(
+                    specification="spec A",
+                    verdict="unsatisfied",
+                    evidence_quote="clear contradicting evidence",
+                    confidence=1.0,
+                    reasoning="clear",
+                ),
+            ]
+        )
+    )
+
+    results = judge_document(
+        document_type="Purchase Contract",
+        ocr_text="irrelevant",
+        specifications=["spec A"],
+        llm=fake,
+    )
+
+    assert results[0].verdict == "unsatisfied"
 
 
 def test_judge_document_fails_safe_when_model_drops_a_spec():
@@ -56,22 +140,20 @@ def test_judge_document_fails_safe_when_model_drops_a_spec():
 
     results = judge_document(
         document_type="Purchase Contract",
-        document_id="doc-1",
         ocr_text="irrelevant for this test",
         specifications=["spec A"],
         llm=fake,
     )
 
     assert len(results) == 1
-    assert results[0].verdict == "needs_human_review"
-    assert "did not include a verdict" in results[0].reasoning
+    assert results[0].verdict == "unsatisfied"
+    assert results[0].confidence == 0.0
 
 
 def test_judge_document_returns_empty_list_for_no_specifications():
     fake = _FakeLLM(JudgeResponse(verdicts=[]))
     results = judge_document(
         document_type="Purchase Contract",
-        document_id="doc-1",
         ocr_text="irrelevant",
         specifications=[],
         llm=fake,

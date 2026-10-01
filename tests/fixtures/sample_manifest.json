@@ -57,7 +57,7 @@
     {
       "id": "00000000-0000-0000-0000-000000000099",
       "source": {
-        "key": "clients/cedb9bff-dc2f-4be5-9a7d-931dd3e78dcc/jobs/5dc75ab2-8d3c-40a7-bfe0-ea946c8496c8/blobs/00000000-0000-0000-0000-00000000bbbb/documents/00000000-0000-0000-0000-000000000099.pdf",
+        "key": "clients/cedb9bff-dc2f-4be5-9a7d-931dd3e78dcc/some-other-unexpected-layout/00000000-0000-0000-0000-000000000099.pdf",
         "bucket": "tasktile-staging"
       },
       "blob_id": "00000000-0000-0000-0000-00000000bbbb",
@@ -65,7 +65,7 @@
         "source": "hil",
         "category_id": 162,
         "category_name": "Appraisal Report",
-        "document_name_schema": "Appraisal Report - fixture only, no OCR artifact on purpose"
+        "document_name_schema": "Appraisal Report - fixture only, no OCR artifact and non-derivable source.key on purpose"
       },
       "metadata": {
         "value": 690000,

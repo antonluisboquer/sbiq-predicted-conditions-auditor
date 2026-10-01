@@ -13,7 +13,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from .contracts import SpecVerdict, Verdict
+from .contracts import CONFIDENCE_THRESHOLD, SpecVerdict, Verdict
 from .prompts import SYSTEM_PROMPT, build_user_prompt
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,11 @@ class RawVerdict(BaseModel):
         description="Verbatim excerpt from the OCR text, or null if none applies",
     )
     confidence: float = Field(ge=0.0, le=1.0)
+    # Asked of the model (forces it to show its work, which measurably
+    # improves verdict quality) but deliberately NOT exposed on the
+    # `SpecVerdict` output contract -- see contracts.py. Still logged at
+    # debug level so it's not lost entirely, just not part of the API
+    # surface.
     reasoning: str
 
 
@@ -45,32 +50,46 @@ class JudgeResponse(BaseModel):
 def _get_llm(model: str):
     from langchain_anthropic import ChatAnthropic
 
-    return ChatAnthropic(model=model, temperature=0).with_structured_output(JudgeResponse)
+    # Default max_tokens (1024) is nowhere near enough once a document_request
+    # has a couple dozen specs, each needing its own reasoning + quote --
+    # hit in practice against Sahay's real 22-spec Appraisal Report request
+    # (truncated tool call -> empty/invalid structured output). 8192 covers
+    # every real sample checked so far; revisit if a document ever needs more.
+    return ChatAnthropic(model=model, temperature=0, max_tokens=8192).with_structured_output(
+        JudgeResponse
+    )
 
 
 def judge_document(
     *,
     document_type: str,
-    document_id: str,
     ocr_text: str,
     specifications: list[str],
     model: str = DEFAULT_MODEL,
     llm=None,
+    is_partial: bool = False,
+    whisper_metadata: Optional[dict] = None,
 ) -> list[SpecVerdict]:
     """Adjudicate every specification for one document in a single LLM call.
 
     `llm` can be injected (anything with an `.invoke(messages) -> JudgeResponse`-
     shaped return) for testing without making real API calls — see
     tests/test_judge.py.
+
+    `is_partial`/`whisper_metadata` (from `ocr_fetcher.OCRTextResult`) flag
+    when Tasktile only OCR'd some of the document's pages, so the model is
+    told not to treat "not mentioned in this text" as "not in the document"
+    — see `prompts.PARTIAL_COVERAGE_NOTE_TEMPLATE`.
     """
     if not specifications:
         return []
 
     user_prompt = build_user_prompt(
         document_type=document_type,
-        document_id=document_id,
         ocr_text=ocr_text,
         specifications=specifications,
+        is_partial=is_partial,
+        whisper_metadata=whisper_metadata,
     )
 
     chain = llm if llm is not None else _get_llm(model)
@@ -84,31 +103,36 @@ def judge_document(
             # Model dropped/reworded a spec rather than echoing it verbatim —
             # fail safe to human review instead of silently omitting it.
             logger.warning(
-                "judge response missing verdict for spec on document_id=%s: %r",
-                document_id,
+                "judge response missing verdict for spec on document_type=%s: %r",
+                document_type,
                 spec,
             )
             results.append(
                 SpecVerdict(
-                    document_id=document_id,
-                    document_type=document_type,
                     specification=spec,
-                    verdict="needs_human_review",
+                    verdict="unsatisfied",
                     evidence_quote=None,
                     confidence=0.0,
-                    reasoning="model response did not include a verdict for this specification",
                 )
             )
             continue
+        logger.debug("spec=%r verdict=%r reasoning=%r", spec, raw.verdict, raw.reasoning)
         results.append(
             SpecVerdict(
-                document_id=document_id,
-                document_type=document_type,
                 specification=spec,
-                verdict=raw.verdict,
+                verdict=_apply_confidence_gate(raw.verdict, raw.confidence),
                 evidence_quote=raw.evidence_quote,
                 confidence=raw.confidence,
-                reasoning=raw.reasoning,
             )
         )
     return results
+
+
+def _apply_confidence_gate(verdict: Verdict, confidence: float) -> Verdict:
+    """A "satisfied" verdict only survives if the model's own confidence
+    clears CONFIDENCE_THRESHOLD; otherwise it's downgraded to "unsatisfied"
+    rather than passed through. "unsatisfied" verdicts are never upgraded by
+    this gate -- it only ever makes a verdict stricter, never looser."""
+    if verdict == "satisfied" and confidence < CONFIDENCE_THRESHOLD:
+        return "unsatisfied"
+    return verdict

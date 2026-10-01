@@ -1,50 +1,44 @@
-from ocr_auditor.contracts import (
-    DocumentRequestInput,
-    ManifestArtifact,
-    ManifestDocument,
-)
+from ocr_auditor.contracts import AuditRequest
 
 
-def test_document_request_input_defaults():
-    req = DocumentRequestInput(document_type="Purchase Contract")
-    assert req.document_ids == []
-    assert req.specifications == []
-    assert req.document_category == ""
+def test_audit_request_defaults():
+    req = AuditRequest(bucket="tasktile-staging", key="a/b/c.txt")
+    assert req.document_type == ""
+    assert req.specifications_unsatisfied == []
 
 
-def test_manifest_document_from_raw():
+def test_audit_request_accepts_specifications_unsatisfied_shape():
+    """Real production document_requests use 'specifications_unsatisfied'."""
     raw = {
-        "id": "abc-123",
-        "category": {"category_id": 200, "category_name": "Purchase Contract"},
+        "bucket": "tasktile-staging",
+        "key": "clients/.../ocr/1893b393-b59b-4195-a181-05c01c4efac9.txt",
+        "document_type": "Appraisal Report",
+        "specifications_unsatisfied": ["spec C", "spec D"],
     }
-    doc = ManifestDocument.from_raw(raw)
-    assert doc.id == "abc-123"
-    assert doc.category_id == 200
-    assert doc.category_name == "Purchase Contract"
+    req = AuditRequest.model_validate(raw)
+    assert req.specifications_unsatisfied == ["spec C", "spec D"]
+    assert req.document_type == "Appraisal Report"
 
 
-def test_manifest_artifact_from_raw_accepts_ocr_type():
+def test_audit_request_accepts_plain_specifications_alias():
+    """'specifications' (plain list) is accepted as an alias for
+    'specifications_unsatisfied', for convenience/older samples."""
     raw = {
-        "type": "ocr",
-        "source": {"bucket": "tasktile-staging", "key": "a/b/c/doc-1.txt"},
-        "document_id": "doc-1",
+        "bucket": "tasktile-staging",
+        "key": "a/b/c.txt",
+        "document_type": "Purchase Contract",
+        "specifications": ["spec A"],
     }
-    artifact = ManifestArtifact.from_raw(raw)
-    assert artifact is not None
-    assert artifact.bucket == "tasktile-staging"
-    assert artifact.key == "a/b/c/doc-1.txt"
-    assert artifact.document_id == "doc-1"
+    req = AuditRequest.model_validate(raw)
+    assert req.specifications_unsatisfied == ["spec A"]
 
 
-def test_manifest_artifact_from_raw_rejects_non_ocr_type():
+def test_audit_request_specifications_unsatisfied_takes_precedence():
     raw = {
-        "type": "blob",
-        "source": {"bucket": "tasktile-staging", "key": "a/b/c/doc-1.pdf"},
-        "document_id": "doc-1",
+        "bucket": "tasktile-staging",
+        "key": "a/b/c.txt",
+        "specifications": ["should be ignored"],
+        "specifications_unsatisfied": ["spec A"],
     }
-    assert ManifestArtifact.from_raw(raw) is None
-
-
-def test_manifest_artifact_from_raw_rejects_incomplete_entry():
-    raw = {"type": "ocr", "source": {}, "document_id": "doc-1"}
-    assert ManifestArtifact.from_raw(raw) is None
+    req = AuditRequest.model_validate(raw)
+    assert req.specifications_unsatisfied == ["spec A"]

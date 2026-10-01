@@ -1,115 +1,97 @@
 """
-Pydantic models for the auditor's input and output data contracts, per
-docs/ocr-auditor-agent-spec.md (#input-data-contract, #output-data-contract).
+Pydantic models for the auditor's input and output data contracts.
 
-These are intentionally NOT imported from predicted-conditions — per the
-spec's #deployment-shape section, this repo is decoupled from that one by
-the JSON shapes documented here, not by a shared library. Field names/shapes
-mirror predicted-conditions' `final_output.document_requests[]` and
-Tasktile's `manifest.json` closely enough to parse them directly, but this
-module is the independent source of truth for this repo.
+Simplified "direct key" contract: the caller (predicted-conditions) already
+knows exactly which OCR artifact backs a given document_request -- it has
+its own manifest access -- so this repo no longer resolves document_ids
+against a manifest itself. The input is just the OCR artifact's exact S3
+location (`bucket` + `key`) plus the specifications to adjudicate against
+it; there is no manifest-resolution step in this pipeline at all.
+
+(An earlier version of this contract took `document_type` +
+`document_ids` + a full `manifest.json` and resolved OCR locations itself
+-- see git history / `scripts/manifest_to_audit_requests.py` for that
+derivation logic, now kept only as a local dev/test convenience for
+building `AuditRequest`s out of existing manifest+final_output fixtures.)
 """
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-Verdict = Literal["satisfied", "still_unsatisfied", "needs_human_review"]
+Verdict = Literal["satisfied", "unsatisfied"]
+
+# A verdict can only be "satisfied" when the judge's own confidence meets
+# this bar; anything below it is forced to "unsatisfied" regardless of what
+# the model said, so a shaky/ambiguous call never slips through as a pass.
+# There is deliberately no third "needs_human_review" value on the output
+# contract -- low confidence on an "unsatisfied" verdict IS the human-review
+# signal (see judge.py).
+CONFIDENCE_THRESHOLD = 0.8
 
 
-class DocumentRequestInput(BaseModel):
-    """One entry from predicted-conditions' `final_output.document_requests[]`,
-    trimmed to the fields the auditor needs (spec #input-data-contract item 1).
+class AuditRequest(BaseModel):
+    """One document to audit: its exact OCR artifact location plus the
+    specifications an earlier sparse-metadata pass marked unsatisfied.
 
-    `document_ids` can legitimately be empty — some document_requests carry
-    no document_ids at all (spec open question #4). Callers should treat
-    that case as `needs_human_review` rather than erroring, since there is
-    nothing to resolve/fetch against.
+    `specifications_unsatisfied` matches the field name used by real
+    production `document_request`s; `specifications` (plain list of
+    strings) is also accepted as an alias for convenience/older samples.
     """
 
-    document_type: str
-    document_category: str = ""
-    document_ids: list[str] = Field(default_factory=list)
-    guideline_reference: str = ""
-    specifications: list[str] = Field(default_factory=list)
-
-
-class ManifestDocument(BaseModel):
-    """Trimmed view of one `manifest.documents[]` entry — just enough to
-    cross-check the audited document's category against what the
-    document_request expects (spec #input-data-contract item 2)."""
-
-    id: str
-    category_id: Optional[int] = None
-    category_name: Optional[str] = None
-
-    @classmethod
-    def from_raw(cls, raw: dict) -> "ManifestDocument":
-        cat = raw.get("category") or {}
-        return cls(
-            id=raw.get("id", "") or "",
-            category_id=cat.get("category_id"),
-            category_name=cat.get("category_name"),
-        )
-
-
-class ManifestArtifact(BaseModel):
-    """Trimmed view of one `manifest.artifacts[]` entry with `type == "ocr"`
-    (spec #ocr-retrieval-mechanism). Entries of any other `type` are not
-    modeled here — `from_raw` returns None for them."""
-
-    type: str
-    document_id: str
     bucket: str
     key: str
+    document_type: str = ""
+    specifications_unsatisfied: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="before")
     @classmethod
-    def from_raw(cls, raw: dict) -> Optional["ManifestArtifact"]:
-        if raw.get("type") != "ocr":
-            return None
-        source = raw.get("source") or {}
-        document_id = raw.get("document_id")
-        bucket = source.get("bucket")
-        key = source.get("key")
-        if not (document_id and bucket and key):
-            return None
-        return cls(type=raw["type"], document_id=document_id, bucket=bucket, key=key)
+    def _normalize_input(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if "specifications_unsatisfied" not in data and "specifications" in data:
+            data["specifications_unsatisfied"] = data["specifications"]
+        return data
 
 
 class SpecVerdict(BaseModel):
-    """Per-specification, per-document output row (spec #output-data-contract)."""
+    """Per-specification output row. Deliberately lean: `reasoning` is used
+    internally by the judge step (helps the model think, and is logged on
+    failure) but is NOT part of this contract -- callers get the verdict,
+    how confident it is, and the verbatim OCR evidence backing it, nothing
+    more verbose than that."""
 
-    document_id: Optional[str] = None
-    document_type: str
     specification: str
     verdict: Verdict
+    confidence: float = 0.0
     evidence_quote: Optional[str] = Field(
         default=None,
         description="Verbatim excerpt from the OCR text supporting the verdict, or null",
     )
-    confidence: float = 0.0
-    reasoning: str = ""
 
 
 class DocumentAuditResult(BaseModel):
-    """All verdicts produced for one resolved (document_type, document_id)
-    pair, plus the resolution bookkeeping needed to explain unresolved
-    documents (no manifest entry / no OCR artifact / category mismatch)."""
+    """All verdicts produced for one `AuditRequest`, plus fetch bookkeeping
+    so a failed S3 fetch is distinguishable from a genuinely-judged
+    document. `verdicts` is always exactly one row per specification that
+    was asked about -- every specification is persisted in the output
+    regardless of its verdict (nothing is filtered out), so a caller never
+    has to guess whether a missing spec means "satisfied" or "we didn't
+    check"."""
 
-    document_request_document_type: str
-    document_ids: list[str] = Field(default_factory=list)
-    resolved: bool
-    resolution_note: str = ""
+    bucket: str
+    key: str
+    document_type: str = ""
+    fetched: bool
+    error: Optional[str] = None
     verdicts: list[SpecVerdict] = Field(default_factory=list)
 
 
 class AuditReport(BaseModel):
-    """Aggregate report rolled up across all document_requests passed in,
-    meant to be diffed against the original pipeline's
-    `document_requests[].specifications` / `satisfied_specifications` split
-    (spec #output-data-contract)."""
+    """Aggregate report rolled up across all `AuditRequest`s passed in."""
 
     generated_at: str
     document_results: list[DocumentAuditResult] = Field(default_factory=list)

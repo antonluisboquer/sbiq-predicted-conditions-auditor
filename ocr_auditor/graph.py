@@ -1,18 +1,23 @@
 """
-LangGraph wiring for the OCR Auditor, mirroring the architecture diagram in
-docs/ocr-auditor-agent-spec.md (#architecture):
+LangGraph wiring for the OCR Auditor:
 
-    Resolver -> Fetcher -> Judge -> Report
+    Fetch -> Judge -> Report
 
 Kept as a straightforward linear graph rather than a ReAct/tool-calling
-loop: unlike predicted-conditions' multi-step orchestrator, this pipeline's
-control flow is fully deterministic end to end — resolving document_ids and
-fetching OCR text are plain lookups/IO, and the only genuinely model-driven
-step is the per-document judge call. A StateGraph still buys clean
-separation between the four stages and a natural place to later add
-retries, parallel fan-out per document, or a chunking fallback for
-oversized OCR text (spec #audit-logic "Long-context handling") without
-restructuring callers.
+loop: this pipeline's control flow is fully deterministic end to end --
+fetching OCR text is plain IO, and the only genuinely model-driven step is
+the per-document judge call. A StateGraph still buys clean separation
+between stages and a natural place to later add retries, parallel fan-out
+per document, or a chunking fallback for oversized OCR text (spec
+#audit-logic "Long-context handling") without restructuring callers.
+
+NOTE: there is deliberately no "resolve" stage here. `AuditRequest` already
+carries the exact `bucket`/`key` of the OCR artifact to fetch -- the caller
+(predicted-conditions) is responsible for knowing where that is (it has its
+own manifest access). See `contracts.py`'s module docstring, and
+`scripts/manifest_to_audit_requests.py` for a dev/test-only helper that
+derives `bucket`/`key` from an existing manifest.json + final_output.json
+pair when you don't already have them handy.
 """
 
 from __future__ import annotations
@@ -23,108 +28,86 @@ from typing import Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from .contracts import AuditReport, DocumentAuditResult, DocumentRequestInput, SpecVerdict
+from .contracts import AuditReport, AuditRequest, DocumentAuditResult, SpecVerdict
 from .judge import DEFAULT_MODEL, judge_document
-from .manifest_resolver import resolve_document_request
 from .ocr_fetcher import OCRTextFetchError, OCRTextFetcher
 
 
 @dataclass
 class PendingAudit:
-    """Working state for one (document_request, document_id) pair as it
-    flows through resolve -> fetch -> judge. Kept as a plain dataclass
-    (rather than threading everything through `DocumentAuditResult`
-    directly) so intermediate fields (bucket/key/ocr_text/fetch_error) don't
-    leak into the pydantic output contract.
+    """Working state for one `AuditRequest` as it flows through fetch ->
+    judge. Kept as a plain dataclass (rather than threading everything
+    through `DocumentAuditResult` directly) so intermediate fields
+    (ocr_text/fetch_error/etc.) don't leak into the pydantic output
+    contract.
     """
 
+    bucket: str
+    key: str
     document_type: str
-    document_id: Optional[str]
     specifications: list[str]
-    resolved: bool
-    resolution_note: str = ""
-    bucket: Optional[str] = None
-    key: Optional[str] = None
     ocr_text: Optional[str] = None
+    ocr_is_partial: bool = False
+    ocr_whisper_metadata: dict = field(default_factory=dict)
     fetch_error: Optional[str] = None
     verdicts: list[SpecVerdict] = field(default_factory=list)
 
     def to_result(self) -> DocumentAuditResult:
         return DocumentAuditResult(
-            document_request_document_type=self.document_type,
-            document_ids=[self.document_id] if self.document_id else [],
-            resolved=self.resolved and self.fetch_error is None,
-            resolution_note=self.fetch_error or self.resolution_note,
+            bucket=self.bucket,
+            key=self.key,
+            document_type=self.document_type,
+            fetched=self.fetch_error is None,
+            error=self.fetch_error,
             verdicts=self.verdicts,
         )
 
 
 class AuditorState(TypedDict, total=False):
-    document_requests: list[DocumentRequestInput]
-    manifest: dict
+    audit_requests: list[AuditRequest]
     pending: list[PendingAudit]
     report: AuditReport
 
 
-def _unresolved_verdicts(pending: PendingAudit, reason: str) -> list[SpecVerdict]:
+def _unresolved_verdicts(pending: PendingAudit) -> list[SpecVerdict]:
+    """Used when a document couldn't be judged at all (fetch failed, or
+    dry_run) -- every requested specification still gets a row, flagged
+    unsatisfied at zero confidence (fail-safe: never claim "satisfied" for
+    something that was never actually checked), so nothing silently
+    disappears from the output. The *why* lives on the parent
+    `DocumentAuditResult.error`, not repeated per-row."""
     return [
         SpecVerdict(
-            document_id=pending.document_id,
-            document_type=pending.document_type,
             specification=spec,
-            verdict="needs_human_review",
+            verdict="unsatisfied",
             evidence_quote=None,
             confidence=0.0,
-            reasoning=reason,
         )
         for spec in pending.specifications
     ]
 
 
-def _resolve_node(state: AuditorState) -> AuditorState:
-    manifest = state["manifest"]
-    pending: list[PendingAudit] = []
-
-    for request in state["document_requests"]:
-        if not request.document_ids:
-            # Spec open question #4: no document_ids at all -> nothing to
-            # resolve/fetch against, flag the whole request for review.
-            pending.append(
-                PendingAudit(
-                    document_type=request.document_type,
-                    document_id=None,
-                    specifications=list(request.specifications),
-                    resolved=False,
-                    resolution_note="document_request has no document_ids",
-                )
-            )
-            continue
-
-        resolution = resolve_document_request(request, manifest)
-        for resolved in resolution.resolved_documents:
-            note = resolved.reason or resolved.category_mismatch_note
-            pending.append(
-                PendingAudit(
-                    document_type=request.document_type,
-                    document_id=resolved.document_id,
-                    specifications=list(request.specifications),
-                    resolved=resolved.resolved,
-                    resolution_note=note,
-                    bucket=resolved.bucket,
-                    key=resolved.key,
-                )
-            )
-
+def _prepare_node(state: AuditorState) -> AuditorState:
+    pending = [
+        PendingAudit(
+            bucket=req.bucket,
+            key=req.key,
+            document_type=req.document_type,
+            specifications=list(req.specifications_unsatisfied),
+        )
+        for req in state["audit_requests"]
+    ]
     return {**state, "pending": pending}
 
 
 def _make_fetch_node(fetcher: OCRTextFetcher):
     def _fetch_node(state: AuditorState) -> AuditorState:
         for item in state["pending"]:
-            if not item.resolved:
-                continue
             try:
-                item.ocr_text = fetcher.fetch(item.bucket, item.key)
+                result = fetcher.fetch(item.bucket, item.key)
+                item.ocr_text = result.text
+                item.ocr_is_partial = result.is_partial
+                item.ocr_whisper_metadata = result.whisper_metadata
             except OCRTextFetchError as exc:
                 item.fetch_error = str(exc)
         return state
@@ -135,24 +118,23 @@ def _make_fetch_node(fetcher: OCRTextFetcher):
 def _make_judge_node(model: str, llm, dry_run: bool):
     def _judge_node(state: AuditorState) -> AuditorState:
         for item in state["pending"]:
-            if not item.resolved or item.fetch_error is not None:
-                reason = item.fetch_error or item.resolution_note or "document not resolved"
-                item.verdicts = _unresolved_verdicts(item, reason)
+            if item.fetch_error is not None:
+                item.verdicts = _unresolved_verdicts(item)
                 continue
 
             if dry_run:
-                item.verdicts = _unresolved_verdicts(
-                    item, "dry-run: judge (LLM) step skipped"
-                )
+                # Fetch succeeded; just skip the (costly) LLM judge call.
+                item.verdicts = _unresolved_verdicts(item)
                 continue
 
             item.verdicts = judge_document(
                 document_type=item.document_type,
-                document_id=item.document_id or "",
                 ocr_text=item.ocr_text or "",
                 specifications=item.specifications,
                 model=model,
                 llm=llm,
+                is_partial=item.ocr_is_partial,
+                whisper_metadata=item.ocr_whisper_metadata,
             )
         return state
 
@@ -160,16 +142,14 @@ def _make_judge_node(model: str, llm, dry_run: bool):
 
 
 def _summarize(pending: list[PendingAudit]) -> dict:
-    counts = {"satisfied": 0, "still_unsatisfied": 0, "needs_human_review": 0}
+    counts = {"satisfied": 0, "unsatisfied": 0}
     for item in pending:
         for v in item.verdicts:
             counts[v.verdict] = counts.get(v.verdict, 0) + 1
     return {
         "total_documents_audited": len(pending),
-        "documents_resolved": sum(1 for p in pending if p.resolved and p.fetch_error is None),
-        "documents_unresolved": sum(
-            1 for p in pending if not (p.resolved and p.fetch_error is None)
-        ),
+        "documents_fetched": sum(1 for p in pending if p.fetch_error is None),
+        "documents_fetch_failed": sum(1 for p in pending if p.fetch_error is not None),
         "verdict_counts": counts,
     }
 
@@ -191,21 +171,20 @@ def build_graph(
     llm=None,
     dry_run: bool = False,
 ):
-    """Build and compile the resolve -> fetch -> judge -> report StateGraph.
+    """Build and compile the fetch -> judge -> report StateGraph.
 
     `fetcher` is required explicitly (no default) so callers always make an
-    intentional choice between `S3OCRTextFetcher` (real, requires access not
-    yet arranged per spec open question #1) and `LocalDirOCRTextFetcher`
-    (local fixtures, see scripts/run_local.py).
+    intentional choice between `S3OCRTextFetcher` (real) and
+    `LocalDirOCRTextFetcher` (local fixtures, see scripts/run_local.py).
     """
     graph = StateGraph(AuditorState)
-    graph.add_node("resolve", _resolve_node)
+    graph.add_node("prepare", _prepare_node)
     graph.add_node("fetch", _make_fetch_node(fetcher))
     graph.add_node("judge", _make_judge_node(model, llm, dry_run))
     graph.add_node("report", _report_node)
 
-    graph.set_entry_point("resolve")
-    graph.add_edge("resolve", "fetch")
+    graph.set_entry_point("prepare")
+    graph.add_edge("prepare", "fetch")
     graph.add_edge("fetch", "judge")
     graph.add_edge("judge", "report")
     graph.add_edge("report", END)
@@ -215,8 +194,7 @@ def build_graph(
 
 def run_audit(
     *,
-    document_requests: list[DocumentRequestInput],
-    manifest: dict,
+    audit_requests: list[AuditRequest],
     fetcher: OCRTextFetcher,
     model: str = DEFAULT_MODEL,
     llm=None,
@@ -228,7 +206,5 @@ def run_audit(
     (local CLI) so the two entry points share identical pipeline behavior.
     """
     app = build_graph(fetcher=fetcher, model=model, llm=llm, dry_run=dry_run)
-    final_state = app.invoke(
-        {"document_requests": document_requests, "manifest": manifest}
-    )
+    final_state = app.invoke({"audit_requests": audit_requests})
     return final_state["report"]

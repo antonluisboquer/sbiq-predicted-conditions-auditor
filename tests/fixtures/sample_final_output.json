@@ -5,11 +5,9 @@
       "document_category": "Title",
       "document_ids": ["c5f7e0a2-b8ba-4533-8404-db9ba33e0b36"],
       "guideline_reference": "",
-      "specifications": [
+      "specifications_unsatisfied": [
         "A copy of the fully executed purchase contract is required.",
-        "All attachments to the purchase contract are required.",
-        "All addenda to the purchase contract are required.",
-        "An assignment of the purchase contract is not permitted unless the individual assigning the contract is assigning the rights to an entity in which the individual has an ownership interest."
+        "All attachments to the purchase contract are required."
       ]
     },
     {
@@ -17,9 +15,8 @@
       "document_category": "Title",
       "document_ids": ["53134a24-92f3-45b5-8468-58d593c99da3"],
       "guideline_reference": "",
-      "specifications": [
-        "Earnest money deposit must be documented with a copy of the cancelled check or wire transfer confirmation.",
-        "Earnest money deposit amount must match the amount stated in the purchase contract."
+      "specifications_unsatisfied": [
+        "Earnest money deposit must be documented with a copy of the cancelled check or wire transfer confirmation."
       ]
     },
     {
@@ -27,8 +24,7 @@
       "document_category": "Property",
       "document_ids": ["00000000-0000-0000-0000-000000000099"],
       "guideline_reference": "",
-      "specifications": [
-        "Appraisal report must contain original color photographs or digital color images of the front, street, and rear views of the subject property",
+      "specifications_unsatisfied": [
         "Appraisal report must contain a street map showing the location of the subject property and all comparables used"
       ]
     },
@@ -37,7 +33,7 @@
       "document_category": "Credit",
       "document_ids": ["99999999-9999-9999-9999-999999999999"],
       "guideline_reference": "",
-      "specifications": [
+      "specifications_unsatisfied": [
         "Credit report must be dated within 120 days of the note date."
       ]
     },
@@ -46,7 +42,7 @@
       "document_category": "Income",
       "document_ids": [],
       "guideline_reference": "",
-      "specifications": [
+      "specifications_unsatisfied": [
         "Rental agreement must be signed by all parties and show a term of at least 12 months."
       ]
     }

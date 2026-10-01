@@ -20,32 +20,107 @@ unsatisfied specs directly against it.
 
 ## Status
 
-Early scaffold. The two biggest open items from the spec are **not yet
-resolved**:
+Validated end-to-end against real data (Sahay Vibhor Binayprasad's
+Appraisal Report, the exact case that originally motivated this project):
+real S3 fetch from `tasktile-staging`, real Sonnet judge call, 22 real
+unsatisfied specs re-adjudicated. Of spec open questions #1/#2/#5:
 
-1. No confirmed AWS access to the `tasktile-staging` bucket that holds the
-   OCR `.txt` files (spec open question #1).
-2. ~40% of sampled real manifests have no `artifacts[]` key at all, so OCR
-   text can't be resolved for them even once (1) is solved (spec open
-   question #2) — needs a fix at the run-submission layer upstream.
+1. AWS access to `tasktile-staging` **is confirmed working** (scoped
+   credentials; a separate bucket, `tasktile-dev`, is not yet covered).
+2. The caller now passes each document's exact OCR `bucket`/`key` directly
+   (see **Input/output contract** below) — this repo no longer resolves
+   `document_ids` against a manifest itself, so "manifests with no
+   `artifacts[]` key" is no longer this repo's problem to solve.
+5. Real OCR artifacts are JSON (`{"result_text": ..., "whisper_metadata": ...}`),
+   not plain text — handled in `ocr_auditor/ocr_fetcher.py`.
 
 Everything here can be exercised **locally today** with fixture data via
-`scripts/run_local.py` and `LocalDirOCRTextFetcher`, independent of both
-blockers.
+`scripts/run_local.py` and `LocalDirOCRTextFetcher`, or against real S3 via
+`S3OCRTextFetcher.from_env()`.
+
+## Input/output contract
+
+The engine runs **per document**, not per loan: give it an OCR artifact's
+exact `bucket`/`key` plus the specifications to re-check against it. No
+manifest, no `document_ids` — the caller (predicted-conditions) already
+knows where each document's OCR text lives.
+
+```json
+{
+  "audit_requests": [
+    {
+      "bucket": "tasktile-staging",
+      "key": "clients/<client>/jobs/<job>/blobs/<blob>/ocr/<document_id>.txt",
+      "document_type": "Appraisal Report",
+      "specifications_unsatisfied": ["spec 1", "spec 2", "..."]
+    }
+  ]
+}
+```
+
+returns an `AuditReport` with one `DocumentAuditResult` per request, and
+**one verdict row per specification requested — every spec is persisted in
+the output regardless of its verdict** (nothing is silently dropped):
+
+```json
+{
+  "generated_at": "...",
+  "document_results": [
+    {
+      "bucket": "tasktile-staging",
+      "key": "...",
+      "document_type": "Appraisal Report",
+      "fetched": true,
+      "error": null,
+      "verdicts": [
+        {
+          "specification": "spec 1",
+          "verdict": "satisfied",
+          "confidence": 1.0,
+          "evidence_quote": "verbatim OCR excerpt backing the verdict"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_documents_audited": 1,
+    "documents_fetched": 1,
+    "documents_fetch_failed": 0,
+    "verdict_counts": {"satisfied": 1, "unsatisfied": 0}
+  }
+}
+```
+
+`verdict` is always one of `satisfied` / `unsatisfied` — a binary call,
+no third "needs review" value. A verdict can only come back `satisfied`
+if the judge's own `confidence` clears `CONFIDENCE_THRESHOLD` (0.8,
+`ocr_auditor/contracts.py`); anything less confident is forced to
+`unsatisfied` regardless of what the model said, so low confidence is the
+human-review signal — a low-confidence `unsatisfied` means "this needs a
+human to check", not "this document fails the requirement" outright.
+`reasoning` is used internally by the judge step (improves verdict
+quality, logged on failure) but is deliberately not part of this output
+contract — see `ocr_auditor/contracts.py`.
+
+If you only have the older `final_output.json` + `manifest.json` shape
+(predicted-conditions' own data), convert it first with
+`scripts/manifest_to_audit_requests.py` (dev/test convenience only — not
+used by the core engine; see its module docstring for the OCR-key-
+derivation logic it uses when a manifest has no `artifacts[]` entry for a
+document).
 
 ## Architecture
 
 ```
-Resolver -> Fetcher -> Judge -> Report
+Fetcher -> Judge -> Report
 ```
 
 A linear [LangGraph](https://langchain-ai.github.io/langgraph/) `StateGraph`
-(`ocr_auditor/graph.py`) wiring four deterministic-except-one-step stages:
+(`ocr_auditor/graph.py`) wiring three deterministic-except-one-step stages:
 
 | Stage | Module | What it does |
 |---|---|---|
-| Resolve | `ocr_auditor/manifest_resolver.py` | Map each unsatisfied spec's `document_ids` to an OCR `.txt` location via `manifest.artifacts[]`; cross-check manifest category vs. requested `document_type`. |
-| Fetch | `ocr_auditor/ocr_fetcher.py` | Retrieve the raw OCR text — `S3OCRTextFetcher` (real, blocked on access) or `LocalDirOCRTextFetcher` (local fixtures). |
+| Fetch | `ocr_auditor/ocr_fetcher.py` | Retrieve the raw OCR text from the request's `bucket`/`key` — `S3OCRTextFetcher` (real) or `LocalDirOCRTextFetcher` (local fixtures). |
 | Judge | `ocr_auditor/judge.py` + `prompts.py` | One LLM call per document: full OCR text + that document's unsatisfied specs → a verdict per spec, grounded only in quoted text. |
 | Report | `ocr_auditor/graph.py` (`_report_node`) | Aggregate per-document verdicts into an `AuditReport` with summary counts. |
 
@@ -56,27 +131,27 @@ See `ocr_auditor/contracts.py` for the full input/output pydantic schemas.
 ```bash
 pip install -r requirements.txt
 
-# Dry run: exercises resolve -> fetch -> report, skips the LLM call
-# entirely (no API key needed).
+# Dry run: exercises fetch -> report, skips the LLM call entirely (no API
+# key needed).
 python scripts/run_local.py \
-  --final-output tests/fixtures/sample_document_requests.json \
-  --manifest tests/fixtures/sample_manifest.json \
+  --audit-requests tests/fixtures/sample_audit_requests.json \
   --ocr-dir tests/fixtures/ocr_texts \
   --dry-run
 
 # Real run: calls the LLM judge step (requires ANTHROPIC_API_KEY).
 export ANTHROPIC_API_KEY=...
 python scripts/run_local.py \
-  --final-output tests/fixtures/sample_document_requests.json \
-  --manifest tests/fixtures/sample_manifest.json \
+  --audit-requests tests/fixtures/sample_audit_requests.json \
   --ocr-dir tests/fixtures/ocr_texts
+
+# Against real S3 (requires .env's S3_ACCESS_KEY/S3_SECRET_KEY) -- omit
+# --ocr-dir:
+python scripts/run_local.py --audit-requests /tmp/my_audit_requests.json
 ```
 
-`tests/fixtures/` pairs real manifest/spec shapes (trimmed from
-`predicted-conditions/compiled_inputs/montes_10x` and
-`data/canonical_doc_specs.json`) with **synthetic** OCR text — see
-`tests/fixtures/README.md`. The real OCR `.txt` format hasn't been
-inspected yet (spec open question #5); once it has, update these fixtures.
+`tests/fixtures/` pairs real spec wording (from
+`predicted-conditions/data/canonical_doc_specs.json`) with **synthetic**
+OCR text — see `tests/fixtures/README.md`.
 
 ## Running tests
 
@@ -109,10 +184,11 @@ cdk deploy
 ## Repo layout
 
 ```
-ocr_auditor/            # core library (resolve, fetch, judge, graph, contracts)
-api/                     # Lambda handler + Dockerfile
-scripts/run_local.py     # CLI runner against local fixtures, no AWS needed
-infra/                   # CDK stack
-tests/                   # pytest suite + fixtures
-docs/ocr-auditor-agent-spec.md   # the design spec this repo implements
+ocr_auditor/                          # core library (fetch, judge, graph, contracts)
+api/                                   # Lambda handler + Dockerfile
+scripts/run_local.py                   # CLI runner against local fixtures or real S3
+scripts/manifest_to_audit_requests.py  # dev/test-only: old manifest shape -> AuditRequest
+infra/                                  # CDK stack
+tests/                                  # pytest suite + fixtures
+docs/ocr-auditor-agent-spec.md          # the design spec this repo implements
 ```

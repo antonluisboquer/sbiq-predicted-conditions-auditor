@@ -13,3 +13,7 @@ infra/.cdk.staging/
 *.log
 /report*.json
 .pytest_cache/
+
+# Real production data pulled into fixtures for live testing -- keep
+# local-only, never committed (PII handling decision).
+tests/fixtures/*_live.json
